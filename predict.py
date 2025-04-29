@@ -5,10 +5,83 @@ import numpy as np
 import time
 from sklearn.tree import export_graphviz
 import graphviz
+from utils import extract_topological_features, prepare_link_prediction_data, create_edge_dataset, compute_edge_features_optimized, compute_edge_features
+import graphviz
 
-from utils import extract_topological_features, prepare_link_prediction_data, create_edge_dataset, compute_edge_features
 from load import load_network, load_features
 from evaluate import evaluate_model
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import export_graphviz
+import numpy as np, matplotlib.pyplot as plt, graphviz
+
+# ---------- helper ----------
+def sample_negatives(G, k, rng):
+    nodes = list(G.nodes())
+    neg = set()
+    while len(neg) < k:
+        u, v = rng.choice(nodes), rng.choice(nodes)
+        if u != v and not G.has_edge(u, v):
+            neg.add((u, v))
+    return list(neg)
+
+# ---------- main ----------
+def run_link_prediction_on_merged_graph(G_train,
+                                        test_pos,
+                                        test_neg,
+                                        neg_ratio_train=1,
+                                        rng=np.random.default_rng(42)):
+    """
+    G_train : graph with *no* held-out edges
+    test_pos / test_neg : lists of (u,v) tuples
+    """
+
+    # 1) features from leak-free graph
+    topo = extract_topological_features(G_train)
+
+    # 2) build training edge lists
+    train_pos = list(G_train.edges())
+    train_neg = sample_negatives(G_train,
+                                 k=len(train_pos) * neg_ratio_train,
+                                 rng=rng)
+
+    # 3) vectorise
+    X_tr, y_tr, f_names = create_edge_dataset(G_train, train_pos, train_neg, topo)
+    X_te, y_te, _        = create_edge_dataset(G_train, test_pos,  test_neg,  topo)
+
+    # 4) scale + fit
+    scaler = StandardScaler()
+    X_tr = scaler.fit_transform(X_tr)
+    X_te = scaler.transform(X_te)
+
+    rf = RandomForestClassifier(n_estimators=100,
+                                random_state=42,
+                                oob_score=True,
+                                n_jobs=-1)
+    rf.fit(X_tr, y_tr)
+
+    # 5) evaluate
+    y_prob = rf.predict_proba(X_te)[:, 1]
+    auc, ap, prec, rec, f1, acc = evaluate_model(y_te, y_prob)
+
+    # 6) quick feature importance plot
+    fi = rf.feature_importances_
+    plt.figure(figsize=(8, 5))
+    plt.barh(np.array(f_names)[np.argsort(fi)], np.sort(fi))
+    plt.title('Feature importance'); plt.tight_layout()
+    plt.savefig('feature_importance_merged.png', dpi=300); plt.close()
+
+    # optional: export one tree
+    dot = export_graphviz(rf.estimators_[0], feature_names=f_names,
+                          class_names=["No-link", "Link"],
+                          filled=True, rounded=True, max_depth=3)
+    graphviz.Source(dot).render('sample_tree_merged')
+
+    return dict(auc_score=auc, ap_score=ap, precision=prec,
+                recall=rec, f1=f1, accuracy=acc,
+                feature_importance=dict(zip(f_names, fi)))
+
+
 
 def run_link_prediction(ego_id, data_dir):
     """
@@ -195,7 +268,7 @@ def run_link_prediction(ego_id, data_dir):
 
     # Train the final model
     final_rf = RandomForestClassifier(
-        n_estimators=100,      # Number of trees in the forest
+        n_estimators=75,      # Number of trees in the forest
         max_depth=None,        # Maximum depth of the trees
         min_samples_split=2,   # Minimum samples required to split an internal node
         min_samples_leaf=1,    # Minimum samples required at a leaf node
@@ -251,3 +324,4 @@ def run_link_prediction(ego_id, data_dir):
         'oob_scores': oob_scores,
         'n_estimators_list': n_estimators_list
     }
+

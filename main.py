@@ -17,7 +17,7 @@ if __name__ == "__main__":
         if filename.endswith(".edges"):
             ego_networks.append(filename.split(".")[0])
 
-    print(f"Found {len(ego_networks)} ego networks: {ego_networks}")
+    print(f"Found {len(ego_networks)} ego networks")
 
     # Select a single ego network to analyze
     if len(ego_networks) > 0:

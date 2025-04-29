@@ -3,6 +3,56 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, precision_recall_curve, average_precision_score
 
+def compute_edge_features_optimized(G, G_undirected, degrees, neighbors, preds, succs, node_u, node_v, node_features):
+    u_feats = node_features.get(node_u, {})
+    v_feats = node_features.get(node_v, {})
+
+    # Common neighbors & Jaccard
+    u_nbrs = neighbors.get(node_u, set())
+    v_nbrs = neighbors.get(node_v, set())
+
+    common = u_nbrs & v_nbrs
+    union = u_nbrs | v_nbrs
+    num_common_neighbors = len(common)
+    jaccard = len(common) / len(union) if union else 0.0
+
+    # Preferential attachment
+    pref_attachment = degrees.get(node_u, 0) * degrees.get(node_v, 0)
+
+    # Adamic-Adar
+    adamic_adar = sum(1.0 / np.log(degrees[n]) for n in common if degrees.get(n, 0) > 1)
+
+    # Directed features
+    u_preds = preds.get(node_u, set())
+    v_preds = preds.get(node_v, set())
+    u_succs = succs.get(node_u, set())
+    v_succs = succs.get(node_v, set())
+
+    reciprocity = 1.0 if node_u in v_succs else 0.0
+    follower_overlap = len(u_preds & v_preds) / max(1, min(len(u_preds), len(v_preds)))
+    following_overlap = len(u_succs & v_succs) / max(1, min(len(u_succs), len(v_succs)))
+
+    return {
+        'u_degree': u_feats.get('degree_centrality', 0.0),
+        'u_in_degree': u_feats.get('in_degree_centrality', 0.0),
+        'u_out_degree': u_feats.get('out_degree_centrality', 0.0),
+        'u_pagerank': u_feats.get('pagerank', 0.0),
+        'u_clustering': u_feats.get('clustering', 0.0),
+        'v_degree': v_feats.get('degree_centrality', 0.0),
+        'v_in_degree': v_feats.get('in_degree_centrality', 0.0),
+        'v_out_degree': v_feats.get('out_degree_centrality', 0.0),
+        'v_pagerank': v_feats.get('pagerank', 0.0),
+        'v_clustering': v_feats.get('clustering', 0.0),
+        'common_neighbors': num_common_neighbors,
+        'preferential_attachment': pref_attachment,
+        'jaccard_coefficient': jaccard,
+        'adamic_adar': adamic_adar,
+        'reciprocity': reciprocity,
+        'follower_overlap': follower_overlap,
+        'following_overlap': following_overlap
+    }
+
+
 def compute_edge_features(G, node_u, node_v, node_features):
     """
     Compute features for a potential edge between nodes u and v
@@ -281,4 +331,8 @@ def evaluate_model(y_true, y_scores):
     plt.savefig("threshold_analysis.png", dpi=300, bbox_inches='tight')
     plt.show()
 
-    return auc_score, ap_score
+    # Find threshold with highest F1
+    best = max(threshold_metrics, key=lambda x: x['F1 Score'])
+
+    return auc_score, ap_score, best['Precision'], best['Recall'], best['F1 Score'], best['Accuracy']
+
